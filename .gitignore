@@ -217,5 +217,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Axel - custome:
+# Axel - custom:
 data/
+*Zone.Identifier
