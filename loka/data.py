@@ -8,7 +8,6 @@ def load_breakthrough_states(filename):
     boards = np.array([list(p[0].replace("/", "")) for p in parts])
     outcomes = np.array([p[-1] for p in parts])
 
-    # Plane 0 = white, plane 1 = black -> (N, 50), same layout as your original
     X = np.concatenate([boards == "w", boards == "b"], axis=1).astype(np.uint8)
     Y = np.where(outcomes == "2", 1, -1).astype(np.int8)
     return X, Y
