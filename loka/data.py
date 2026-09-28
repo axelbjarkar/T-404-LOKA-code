@@ -1,6 +1,6 @@
 import numpy as np
 
-def load_breakthrough_states(filename):
+def load_breakthrough_states(filename, two_channel: bool = False):
     with open(filename) as f:
         parts = [line.split() for line in f if line.strip()]
 
@@ -10,4 +10,8 @@ def load_breakthrough_states(filename):
 
     X = np.concatenate([boards == "w", boards == "b"], axis=1).astype(np.uint8)
     Y = np.where(outcomes == "2", 1, -1).astype(np.int8)
+
+    if two_channel:
+        X = X.reshape(-1, 2, 5, 5) # one channel for white, one for black
+
     return X, Y
