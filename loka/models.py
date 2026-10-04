@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch
 from torchvision.models import resnet18, ResNet18_Weights
 
 class MLP(nn.Module):
@@ -16,11 +17,11 @@ class MLP(nn.Module):
         return self.net(x).squeeze()  # (N,1) -> (N)
 
 class BreakthroughCNN(nn.Module):
-    def __init__(self):
+    def __init__(self, n_extra: int = 0):
         super().__init__()
         self.net = nn.Sequential(
-            # padding=1 keeps the board 5x5 through both conv layers
-            nn.Conv2d(2, 32, kernel_size=3, padding=1),
+            # 2 board channels + one constant channel per extra feature
+            nn.Conv2d(2 + n_extra, 32, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -31,7 +32,16 @@ class BreakthroughCNN(nn.Module):
         )
 
     def forward(self, x):
-        return self.net(x).squeeze(-1)  # (N,1) -> (N)
+        x = x.reshape(len(x), -1)                             # (N, 50 + n_extra)
+        board = x[:, :50].reshape(-1, 2, 5, 5)                # positions back to a board
+        planes = x[:, 50:, None, None].expand(-1, -1, 5, 5)   # each extra feature -> constant 5x5 plane
+        x = torch.cat([board, planes], dim=1)                 # (N, 2 + n_extra, 5, 5)
+        return self.net(x).squeeze(-1)                        # (N, 1) -> (N)
+
+
+def get_breakthrough_cnn(X):
+    """Build a CNN whose channel count matches X: (N, 2, 5, 5), (N, 50), (N, 52) or (N, 54)."""
+    return BreakthroughCNN(n_extra=X.reshape(len(X), -1).shape[1] - 50)
     
 def get_breakthrough_resnet():
     model = resnet18(weights=ResNet18_Weights.DEFAULT)
