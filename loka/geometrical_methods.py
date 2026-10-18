@@ -29,7 +29,12 @@ def k_center_order(X, max_ratio, device, S0=None):
         return d.clamp_min(0).min(dim=1).values
 
     if isinstance(S0, str) and S0 == 'rand':
-        C0 = torch.rand(100, phi.shape[1], device=device)  # 100 random vectors, uniform in [0, 1)
+        # Per-dimension min and max across all points -> shape: [1, dim]
+        low = phi.min(dim=0, keepdim=True).values
+        high = phi.max(dim=0, keepdim=True).values
+        
+        # Sample uniformly within [low, high] for each dimension independently
+        C0 = low + (high - low) * torch.rand(100, phi.shape[1], device=device)
         min_dist = sq_dist_to(C0)
     elif S0 is not None:
         C0 = torch.as_tensor(S0.reshape(S0.shape[0], -1), dtype=torch.float32, device=device)
