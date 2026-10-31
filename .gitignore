@@ -220,3 +220,4 @@ __marimo__/
 # Axel - custom:
 data/
 *Zone.Identifier
+*.tar.gz
