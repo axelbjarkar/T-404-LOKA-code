@@ -164,3 +164,28 @@ def make_forgettable_subset(
     tail[bad] = pool
     idx_cpu = idx.cpu().numpy()
     return E[idx_cpu], Y[idx_cpu]
+
+
+@torch.no_grad()
+def CAL_select(model, X_label, X_pool, size_Q, k_nearest, chunk=1024, bs=1024):
+    
+    @torch.no_grad()
+    def predict(model, X, bs=1024):
+        out = [model(X[s:s + bs]).reshape(-1) for s in range(0, len(X), bs)]
+        return torch.cat(out)
+        
+    model.eval()
+    k = min(k_nearest, len(X_label))
+
+    pred_label = predict(model, X_label, bs)    # [L]
+    pred_pool = predict(model, X_pool, bs)      # [P]
+
+    scores = torch.empty(len(X_pool), device=pred_pool.device)
+    for s in range(0, len(X_pool), chunk):
+        e = s + chunk
+        d = torch.cdist(X_pool[s:e], X_label)
+        idx = d.topk(k, largest=False).indices
+        nb = pred_label[idx]
+        scores[s:e] = (nb - pred_pool[s:e, None]).abs().mean(dim=1)
+
+    return scores.topk(size_Q).indices
