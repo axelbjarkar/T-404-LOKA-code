@@ -121,3 +121,46 @@ class CAL(TrainingMethod):
               lr=0.001, optimizer='Adam', loss_fn=nn.MSELoss(),
               device=torch.device("cpu"), pbar=True) -> None:
         raise NotImplementedError
+
+
+def make_forgettable_subset(
+    E: torch.Tensor,
+    Y: torch.Tensor,
+    C: torch.Tensor,
+    order: np.ndarray,
+    S_size: int,
+    forgettable_size: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build a subset S of size `S_size` containing `forgettable_size` forgettable events.
+
+    Takes the first `S_size` events in `order`. In the last `forgettable_size`
+    slots, any unforgettable event (C == 0) is replaced by a randomly chosen
+    forgettable event (C != 0) that is not already in S.
+
+    Args:
+        E: Events, indexed along axis 0.
+        Y: Labels, aligned with `E`.
+        C: Per-event forgettable flag (nonzero = forgettable).
+        order: Event indices in priority order.
+        S_size: Number of events in the subset.
+        forgettable_size: Number of slots, counted from the end of S, to make forgettable.
+
+    Returns:
+        The events and labels of the subset, `(E[idx], Y[idx])`.
+    """
+    assert forgettable_size <= S_size
+
+    idx: torch.Tensor = torch.as_tensor(order[:S_size], device=C.device).long().clone()
+    tail: torch.Tensor = idx[S_size - forgettable_size:]    # view into idx
+
+    bad: torch.Tensor = C[tail] == 0                        # unforgettable slots in the tail
+    n: int = int(bad.sum())
+
+    mask: torch.Tensor = C != 0
+    mask[idx] = False                                       # exclude events already in S
+    pool: torch.Tensor = mask.nonzero().squeeze(1)
+    pool = pool[torch.randperm(len(pool), device=pool.device)[:n]]
+
+    tail[bad] = pool
+    idx_cpu = idx.cpu().numpy()
+    return E[idx_cpu], Y[idx_cpu]
