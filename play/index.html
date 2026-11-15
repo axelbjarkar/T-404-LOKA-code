@@ -1,0 +1,88 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Breakthrough vs model</title>
+<style>
+  body { font-family: sans-serif; text-align: center; margin-top: 20px }
+  table { margin: 16px auto; border-collapse: collapse }
+  td { width: 64px; height: 64px; font-size: 44px; line-height: 64px; cursor: pointer; user-select: none }
+  tr:nth-child(odd) td:nth-child(even), tr:nth-child(even) td:nth-child(odd) { background: #b58863 }
+  tr:nth-child(odd) td:nth-child(odd), tr:nth-child(even) td:nth-child(even) { background: #f0d9b5 }
+  td.sel { outline: 4px solid #3a7; outline-offset: -4px }
+  td.dst { background: #9d9 !important }
+  td.last { box-shadow: inset 0 0 0 4px #e8c33a }
+</style>
+<h2>Breakthrough 5x5</h2>
+<div>You play <select id="side"><option value="w">white (bottom, moves first)</option><option value="b">black (top)</option></select>
+<button onclick="start()">New game</button></div>
+<table id="board"></table>
+<div id="status"></div>
+<script>
+let board, turn, human, sel = null, busy = false, over = false, last = [];
+const GLYPH = { w: "⚪", b: "⚫", ".": "" };
+
+function start() {
+  board = [Array(5).fill("b"), Array(5).fill("b"), Array(5).fill("."), Array(5).fill("w"), Array(5).fill("w")];
+  turn = "w"; human = document.getElementById("side").value; sel = null; over = false; last = [];
+  render();
+  if (turn !== human) aiMove();
+}
+
+function legal(r, c) {  // destinations for the human piece at (r,c)
+  const out = [], d = human === "w" ? -1 : 1;
+  for (const dc of [-1, 0, 1]) {
+    const r2 = r + d, c2 = c + dc;
+    if (r2 < 0 || r2 > 4 || c2 < 0 || c2 > 4) continue;
+    const t = board[r2][c2];
+    if ((dc === 0 && t === ".") || (dc !== 0 && t !== human)) out.push([r2, c2]);
+  }
+  return out;
+}
+
+function play(r, c, r2, c2) {
+  board[r2][c2] = board[r][c]; board[r][c] = ".";
+  last = [[r, c], [r2, c2]];
+  const goal = turn === "w" ? 0 : 4;
+  if (r2 === goal) { over = true; render(turn === human ? "You win!" : "Model wins."); return; }
+  turn = turn === "w" ? "b" : "w";
+  render();
+}
+
+async function aiMove() {
+  busy = true; render();
+  const res = await fetch("/", { method: "POST", body: JSON.stringify({ board, side: turn }) });
+  const { move } = await res.json();
+  busy = false;
+  if (!move) { over = true; render("Model has no moves."); return; }
+  play(...move);
+}
+
+function click(r, c) {
+  if (over || busy || turn !== human) return;
+  if (sel && legal(...sel).some(([a, b]) => a === r && b === c)) {
+    const [r0, c0] = sel; sel = null;
+    play(r0, c0, r, c);
+    if (!over) aiMove();
+  } else {
+    sel = board[r][c] === human ? [r, c] : null;
+    render();
+  }
+}
+
+function render(msg) {
+  const t = document.getElementById("board"); t.innerHTML = "";
+  const dsts = sel ? legal(...sel) : [];
+  board.forEach((row, r) => {
+    const tr = t.insertRow();
+    row.forEach((v, c) => {
+      const td = tr.insertCell(); td.textContent = GLYPH[v];
+      if (sel && sel[0] === r && sel[1] === c) td.className = "sel";
+      else if (dsts.some(([a, b]) => a === r && b === c)) td.className = "dst";
+      else if (last.some(([a, b]) => a === r && b === c)) td.className = "last";
+      td.onclick = () => click(r, c);
+    });
+  });
+  document.getElementById("status").textContent =
+    msg || (busy ? "Model is thinking..." : turn === human ? "Your move." : "");
+}
+start();
+</script>
