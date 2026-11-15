@@ -130,4 +130,36 @@ class BreakthroughResNet18(BreakthroughModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.resnet18(x).squeeze(-1)
         
-    
+
+class ResBlock(nn.Module):
+    def __init__(self, c):
+        super().__init__()
+        self.conv1 = nn.Conv2d(c, c, 3, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(c)
+        self.conv2 = nn.Conv2d(c, c, 3, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(c)
+        # two layers, see https://arxiv.org/html/1512.03385v1#S3.E2
+        
+
+    def forward(self, x):
+        y = torch.relu(self.bn1(self.conv1(x)))
+        y = self.bn2(self.conv2(y))
+        return torch.relu(x + y)
+
+class BreakthroughResNet(BreakthroughModel):
+    preprocess = BreakthroughCNN.preprocess          # same flat-features -> board conversion
+
+    def __init__(self, n_extra=0, channels=32, blocks=2, board=5,
+                 head_ch=64, hidden=115):
+        super().__init__()
+        in_ch = 2 + n_extra
+        self.net = nn.Sequential(
+            nn.Conv2d(in_ch, channels, 3, padding=1, bias=False),     # stem
+            nn.BatchNorm2d(channels), nn.ReLU(),
+            *[ResBlock(channels) for _ in range(blocks)],             # tower
+            nn.Conv2d(channels, head_ch, 1, bias=False),              # value head
+            nn.BatchNorm2d(head_ch), nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(head_ch * board * board, hidden), nn.ReLU(),
+            nn.Linear(hidden, 1),
+        )
