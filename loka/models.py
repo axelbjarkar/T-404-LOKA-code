@@ -3,7 +3,12 @@ import torch.nn as nn
 from torchvision.models import resnet18, ResNet18_Weights
 import math
 
-N_BOARD_FEATURES = 50  # 2 channels x 5 x 5
+N_BOARD_FEATURES = 50  # 2 channels x 5 x 5 (the default 5x5 board; see board_features)
+
+
+def board_features(board_size: int) -> int:
+    """Number of position features of a board_size x board_size board: 2 channels (white, black)."""
+    return 2 * board_size * board_size
 
 
 class BreakthroughModel(nn.Module):
@@ -96,30 +101,33 @@ class AutoEncoder(BreakthroughModel):
 
 
 class BreakthroughCNN(BreakthroughModel):
-    def __init__(self, n_extra: int = 0):
+    def __init__(self, n_extra: int = 0, board_size: int = 5):
         super().__init__()
+        self.board_size = board_size
         self.net = nn.Sequential(
             # 2 board channels + one constant channel per extra feature
             nn.Conv2d(2 + n_extra, 32, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Flatten(),  # (N, 64, 5, 5) -> (N, 1600)
-            nn.Linear(64 * 5 * 5, 128),
+            nn.Flatten(),  # (N, 64, b, b) -> (N, 64 * b * b)
+            nn.Linear(64 * board_size * board_size, 128),
             nn.ReLU(),
             nn.Linear(128, 1),
         )
 
     def preprocess(self, x):
-        x = x.reshape(len(x), -1)                             # (N, 50 + n_extra)
-        board = x[:, :N_BOARD_FEATURES].reshape(-1, 2, 5, 5)  # positions back to a board
-        planes = x[:, N_BOARD_FEATURES:, None, None].expand(-1, -1, 5, 5)  # extra feature -> constant 5x5 plane
-        return torch.cat([board, planes], dim=1)              # (N, 2 + n_extra, 5, 5)
+        b, n_board = self.board_size, board_features(self.board_size)
+        x = x.reshape(len(x), -1)                                    # (N, 2 b^2 + n_extra)
+        board = x[:, :n_board].reshape(-1, 2, b, b)                  # positions back to a board
+        planes = x[:, n_board:, None, None].expand(-1, -1, b, b)     # extra feature -> constant b x b plane
+        return torch.cat([board, planes], dim=1)                     # (N, 2 + n_extra, b, b)
 
 
-def get_breakthrough_cnn(X):
-    """Build a CNN whose channel count matches X: (N, 2, 5, 5), (N, 50), (N, 52) or (N, 54)."""
-    return BreakthroughCNN(n_extra=X.reshape(len(X), -1).shape[1] - N_BOARD_FEATURES)
+def get_breakthrough_cnn(X, board_size: int = 5):
+    """Build a CNN whose channel count matches X: (N, 2, b, b), (N, 2 b^2) or (N, 2 b^2 + k) for a b x b board."""
+    return BreakthroughCNN(n_extra=X.reshape(len(X), -1).shape[1] - board_features(board_size),
+                           board_size=board_size)
 
 class BreakthroughResNet18(BreakthroughModel):
     def __init__(self):
@@ -147,11 +155,14 @@ class ResBlock(nn.Module):
         return torch.relu(x + y)
 
 class BreakthroughResNet(BreakthroughModel):
-    preprocess = BreakthroughCNN.preprocess          # same flat-features -> board conversion
+    preprocess = BreakthroughCNN.preprocess          # same flat-features -> board conversion (uses self.board_size)
 
-    def __init__(self, n_extra=0, channels=32, blocks=2, board=5,
+    def __init__(self, n_extra=0, channels=32, blocks=2, board_size=5,
                  head_ch=64, hidden=115):
+        # hidden=115 gives the same parameter count as BreakthroughCNN on 5x5 (224,167 vs 224,161);
+        # on 6x6 use hidden=119 (314,351 vs 314,273), see tests/test_models_board_size.py
         super().__init__()
+        self.board_size = board_size
         in_ch = 2 + n_extra
         self.net = nn.Sequential(
             nn.Conv2d(in_ch, channels, 3, padding=1, bias=False),     # stem
@@ -160,6 +171,6 @@ class BreakthroughResNet(BreakthroughModel):
             nn.Conv2d(channels, head_ch, 1, bias=False),              # value head
             nn.BatchNorm2d(head_ch), nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(head_ch * board * board, hidden), nn.ReLU(),
+            nn.Linear(head_ch * board_size * board_size, hidden), nn.ReLU(),
             nn.Linear(hidden, 1),
         )
