@@ -166,19 +166,41 @@ def make_forgettable_subset(
     return E[idx_cpu], Y[idx_cpu]
 
 
+def _predict(model, X, bs=1024):
+    return torch.cat([model(X[s:s + bs]).reshape(-1) for s in range(0, len(X), bs)])
+
+
 @torch.no_grad()
-def CAL_select(model, X_label, X_pool, size_Q, k_nearest, chunk=1024, bs=1024):
-    
-    @torch.no_grad()
-    def predict(model, X, bs=1024):
-        out = [model(X[s:s + bs]).reshape(-1) for s in range(0, len(X), bs)]
-        return torch.cat(out)
-        
+def _penultimate(model, X, bs=1024):
+    """Input of the model's last nn.Linear for every row of X (captured with a forward pre-hook; works for any model of the package)."""
+    last = [m for m in model.modules() if isinstance(m, nn.Linear)][-1]
+    captured = []
+    handle = last.register_forward_pre_hook(lambda mod, args: captured.append(args[0].reshape(len(args[0]), -1)))
+    try:
+        for s in range(0, len(X), bs):
+            model(X[s:s + bs])
+    finally:
+        handle.remove()
+    return torch.cat(captured)
+
+
+@torch.no_grad()
+def CAL_scores(model, X_label, X_pool, k_nearest, chunk=1024, bs=1024, space="raw"):
+    """CAL score of every pool state: the mean |prediction of its k nearest labeled states - its own prediction|.
+    Higher = the model disagrees more with its labeled neighbours. Labels of the pool are never used.
+
+    space: "raw" measures distances on the inputs as given (as CAL_select always did),
+           "penultimate" on the input of the model's last nn.Linear (e.g. 128-d for BreakthroughCNN).
+    Returns a tensor of shape [len(X_pool)]; the model is left in eval mode."""
+    if space not in ("raw", "penultimate"):
+        raise ValueError(f"space must be 'raw' or 'penultimate', got {space!r}")
     model.eval()
     k = min(k_nearest, len(X_label))
 
-    pred_label = predict(model, X_label, bs)    # [L]
-    pred_pool = predict(model, X_pool, bs)      # [P]
+    pred_label = _predict(model, X_label, bs)    # [L]
+    pred_pool = _predict(model, X_pool, bs)      # [P]
+    if space == "penultimate":
+        X_label, X_pool = _penultimate(model, X_label, bs), _penultimate(model, X_pool, bs)
 
     scores = torch.empty(len(X_pool), device=pred_pool.device)
     for s in range(0, len(X_pool), chunk):
@@ -187,5 +209,10 @@ def CAL_select(model, X_label, X_pool, size_Q, k_nearest, chunk=1024, bs=1024):
         idx = d.topk(k, largest=False).indices
         nb = pred_label[idx]
         scores[s:e] = (nb - pred_pool[s:e, None]).abs().mean(dim=1)
+    return scores
 
-    return scores.topk(size_Q).indices
+
+@torch.no_grad()
+def CAL_select(model, X_label, X_pool, size_Q, k_nearest, chunk=1024, bs=1024, space="raw"):
+    """Indexes (into X_pool) of the size_Q pool states with the highest CAL score, see CAL_scores."""
+    return CAL_scores(model, X_label, X_pool, k_nearest, chunk=chunk, bs=bs, space=space).topk(size_Q).indices
