@@ -200,12 +200,13 @@ def CAL_scores(model, X_label, X_pool, k_nearest, chunk=1024, bs=1024, space="ra
     pred_label = _predict(model, X_label, bs)    # [L]
     pred_pool = _predict(model, X_pool, bs)      # [P]
     if space == "penultimate":
-        X_label, X_pool = _penultimate(model, X_label, bs), _penultimate(model, X_pool, bs)
+        X_label = _penultimate(model, X_label, bs)    # the pool's features are computed per chunk (they would not all fit on a small GPU)
 
     scores = torch.empty(len(X_pool), device=pred_pool.device)
     for s in range(0, len(X_pool), chunk):
         e = s + chunk
-        d = torch.cdist(X_pool[s:e], X_label)
+        block = X_pool[s:e] if space == "raw" else _penultimate(model, X_pool[s:e], bs)
+        d = torch.cdist(block, X_label)
         idx = d.topk(k, largest=False).indices
         nb = pred_label[idx]
         scores[s:e] = (nb - pred_pool[s:e, None]).abs().mean(dim=1)
